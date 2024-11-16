@@ -35,7 +35,7 @@ def process_image_route():
             return jsonify({"error": "No image file in request"}), 400
 
         files = request.files.getlist('image')
-        if not files or len(files) == 0:
+        if not files:
             return jsonify({"error": "No files provided"}), 400
 
         print(f"Received {len(files)} files for processing.")
@@ -52,36 +52,46 @@ def process_image_route():
             file.save(file_path)
             image_paths.append(file_path)
 
-        # Process images using seg.py functions
+        # Process images
         images = load_images(image_paths)
         panorama = stitch_images(images)
         road_mask = create_road_mask(panorama)
         cleaned_mask = clean_mask(road_mask)
         result = color_roads(panorama, cleaned_mask)
+        resized_result = ResizeWithAspectRatio(result)
         final_result, directions = display_road_directions(cleaned_mask, panorama)
+        resized_result2 = ResizeWithAspectRatio(final_result)
 
+        # Save processed images
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        output_filename = f'processed_{timestamp}.jpg'
-        output_path = os.path.join(app.config['OUTPUT_FOLDER'], output_filename)
+        sub_output_folder = os.path.join(app.config['OUTPUT_FOLDER'], f'output_batch_{timestamp}')
+        os.makedirs(sub_output_folder, exist_ok=True)
 
-        # Save to output folder
-        cv2.imwrite(output_path, final_result)
+        output_files = {}
+        processed_images = [("panorama", panorama), 
+                            ("cleaned_mask", cleaned_mask),
+                            ("resized_result", resized_result), 
+                            ("resized_result2", resized_result2)]
 
-        # Convert to base64
-        _, buffer = cv2.imencode('.jpg', final_result)
-        image_base64 = base64.b64encode(buffer).decode('utf-8')
+        for name, img in processed_images:
+            filename = f"{name}_{timestamp}.jpg"
+            file_path = os.path.join(sub_output_folder, filename)
+            cv2.imwrite(file_path, img)
+
+            # Convert image to base64
+            _, buffer = cv2.imencode('.jpg', img)
+            image_base64 = base64.b64encode(buffer).decode('utf-8')
+            output_files[name] = f"data:image/jpeg;base64,{image_base64}"
 
         return jsonify({
             "message": "Images processed successfully",
-            "processed_image": f"data:image/jpeg;base64,{image_base64}",
-            "image_path": output_path,
+            "processed_images": output_files,
             "directions": list(directions)
         }), 200
 
     except Exception as e:
         print(f"Error processing images: {str(e)}")
         return jsonify({"error": str(e)}), 500
-
 
 if __name__ == "__main__":
     app.run(debug=True, port=8080)
